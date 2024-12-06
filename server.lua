@@ -9,23 +9,17 @@ QBCore.Functions.CreateCallback('tropic-dicegame:checkBet', function(source, cb,
     end
 
     if Player.PlayerData.money['cash'] >= betAmount then
-        cb(true) 
+        -- Remove the money upfront
+        Player.Functions.RemoveMoney('cash', betAmount)
+        cb(true)
     else
-        cb(false) 
+        cb(false)
     end
 end)
-
 
 RegisterNetEvent('tropic-dicegame:payPlayer', function(payout)
     local Player = QBCore.Functions.GetPlayer(source)
     if Player then
         Player.Functions.AddMoney('cash', payout)
-    end
-end)
-
-RegisterNetEvent('tropic-dicegame:playerLoss', function(betAmount)
-    local Player = QBCore.Functions.GetPlayer(source)
-    if Player then
-        Player.Functions.RemoveMoney('cash', betAmount)
     end
 end)

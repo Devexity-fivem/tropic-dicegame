@@ -3,48 +3,88 @@ QBCore = exports['qb-core']:GetCoreObject()
 local spawnedNPCs = {} 
 local rollCounter = 0 
 
+-- Helper function to load a model
+local function loadModel(model)
+    local modelHash = GetHashKey(model)
+    if not IsModelValid(modelHash) then
+        print("Invalid model: " .. tostring(model))
+        return nil
+    end
+    RequestModel(modelHash)
+    while not HasModelLoaded(modelHash) do
+        Wait(10)
+    end
+    return modelHash
+end
+
+-- Helper function to load an animation dictionary
+local function loadAnimDict(dict)
+    RequestAnimDict(dict)
+    while not HasAnimDictLoaded(dict) do
+        Wait(10)
+    end
+end
+
+-- Helper function to create a blip for an NPC
+local function createBlip(coords, blipData)
+    local blip = AddBlipForCoord(coords.x, coords.y, coords.z)
+    SetBlipSprite(blip, blipData.sprite)
+    SetBlipDisplay(blip, 4)
+    SetBlipScale(blip, blipData.scale)
+    SetBlipColour(blip, blipData.color)
+    SetBlipAsShortRange(blip, true)
+    BeginTextCommandSetBlipName("STRING")
+    AddTextComponentString(blipData.label)
+    EndTextCommandSetBlipName(blip)
+end
+
+-- Helper function to reset all NPCs to their default animations
+local function resetNPCsToAnimation()
+    for _, npcData in pairs(spawnedNPCs) do
+        if npcData and npcData.ped and DoesEntityExist(npcData.ped) then
+            TaskStartScenarioInPlace(npcData.ped, npcData.animation, 0, true)
+        end
+    end
+end
+
+-- Spawn all configured NPCs
 Citizen.CreateThread(function()
-    for _, npc in pairs(Config.NPCs) do
-        local pedHash = GetHashKey(npc.model)
-        RequestModel(pedHash)
-        while not HasModelLoaded(pedHash) do
-            Wait(100)
-        end
+    if not Config.NPCs then
+        print("No NPC configuration found!")
+        return
+    end
 
-        local ped = CreatePed(4, pedHash, npc.coords.x, npc.coords.y, npc.coords.z, 0.0, false, true)
-        TaskStartScenarioInPlace(ped, npc.animation, 0, true)
+    for _, npc in ipairs(Config.NPCs) do
+        local pedHash = loadModel(npc.model)
+        if pedHash then
+            local ped = CreatePed(4, pedHash, npc.coords.x, npc.coords.y, npc.coords.z, npc.coords.w or 0.0, false, true)
+            TaskStartScenarioInPlace(ped, npc.animation, 0, true)
 
-        FreezeEntityPosition(ped, true)
-        SetEntityInvincible(ped, true)
-        SetBlockingOfNonTemporaryEvents(ped, true)
-        SetPedFleeAttributes(ped, 0, 0)
-        SetPedCombatAttributes(ped, 46, true)
-        table.insert(spawnedNPCs, {ped = ped, animation = npc.animation})
+            FreezeEntityPosition(ped, true)
+            SetEntityInvincible(ped, true)
+            SetBlockingOfNonTemporaryEvents(ped, true)
+            SetPedFleeAttributes(ped, 0, 0)
+            SetPedCombatAttributes(ped, 46, true)
+            
+            table.insert(spawnedNPCs, {ped = ped, animation = npc.animation})
 
-        if npc.blip and npc.blip.enabled then
-            local blip = AddBlipForCoord(npc.coords.x, npc.coords.y, npc.coords.z)
-            SetBlipSprite(blip, npc.blip.sprite)
-            SetBlipDisplay(blip, 4)
-            SetBlipScale(blip, npc.blip.scale)
-            SetBlipColour(blip, npc.blip.color)
-            SetBlipAsShortRange(blip, true)
-            BeginTextCommandSetBlipName("STRING")
-            AddTextComponentString(npc.blip.label)
-            EndTextCommandSetBlipName(blip)
-        end
+            if npc.blip and npc.blip.enabled then
+                createBlip(npc.coords, npc.blip)
+            end
 
-        if npc.targetable then
-            exports.ox_target:addLocalEntity(ped, {
-                {
-                    name = "dice_gamble",
-                    label = "Play Dice",
-                    icon = "fas fa-dice",
-                    distance = 2.0,
-                    onSelect = function()
-                        openBetMenu(ped)
-                    end
-                }
-            })
+            if npc.targetable then
+                exports.ox_target:addLocalEntity(ped, {
+                    {
+                        name = "dice_gamble",
+                        label = "Play Dice",
+                        icon = "fas fa-dice",
+                        distance = 3.0,
+                        onSelect = function()
+                            openBetMenu(ped)
+                        end
+                    }
+                })
+            end
         end
     end
 end)
@@ -54,8 +94,7 @@ AddEventHandler('onResourceStop', function(resource)
         for _, npcData in pairs(spawnedNPCs) do
             if npcData and npcData.ped and DoesEntityExist(npcData.ped) then
                 DeleteEntity(npcData.ped)
-              else
-           end
+            end
         end
         spawnedNPCs = {}
     end
@@ -68,7 +107,6 @@ function openBetMenu(npcPed)
 
     if input and input[1] then
         local betAmount = tonumber(input[1])
-
         if betAmount and betAmount >= Config.minBet and betAmount <= Config.maxBet then
             QBCore.Functions.TriggerCallback('tropic-dicegame:checkBet', function(canBet)
                 if canBet then
@@ -85,20 +123,21 @@ function openBetMenu(npcPed)
     end
 end
 
-
 function rollDice()
+    -- Simple dice roll: sum of two six-sided dice (2-12)
     return math.random(2, 12)
 end
 
 function startDiceGame(betAmount, npcPed)
-        rollCounter = rollCounter + 1 
+    rollCounter = rollCounter + 1
 
     if rollCounter >= Config.maxRolls then
+        -- If max rolls reached, randomly decide outcome
         local randomOutcome = math.random(1, 2)
         if randomOutcome == 1 then
-            winGame(betAmount) 
+            winGame(betAmount)
         else
-            loseGame(betAmount) 
+            loseGame(betAmount)
         end
         return
     end
@@ -110,34 +149,31 @@ function startDiceGame(betAmount, npcPed)
     lib.notify({title = "You rolled a " .. playerRoll})
 
     if playerRoll == 7 or playerRoll == 11 then
-
         winGame(betAmount)
     else
-
         Wait(Config.rollDelay)
         npcRoll(betAmount, playerRoll, npcPed)
     end
 end
 
-function resetNPCsToAnimation()
-    for _, npcData in pairs(spawnedNPCs) do
-        TaskStartScenarioInPlace(npcData.ped, npcData.animation, 0, true)
-    end
-end
-
 function npcRoll(betAmount, playerRoll, npcPed)
-
     playRollAnimation(npcPed)
     Wait(Config.animation.duration)
 
     local npcRoll = rollDice()
+
+    -- Give the NPC a certain probability to force a winning roll (7 or 11).
+    -- For example, a 30% chance to turn the roll into a guaranteed win:
+    if math.random(1, 100) <= 35 then
+        local forcedWinningRolls = {7, 11}
+        npcRoll = forcedWinningRolls[math.random(#forcedWinningRolls)]
+    end
+
     lib.notify({title = "Opponent rolled a " .. npcRoll})
 
     if npcRoll == 7 or npcRoll == 11 then
-
-        loseGame(betAmount)
+        loseGame(betAmount) -- NPC wins here.
     else
-
         Wait(Config.rollDelay)
         startDiceGame(betAmount, npcPed)
     end
@@ -150,18 +186,15 @@ function winGame(betAmount)
     TriggerServerEvent('tropic-dicegame:payPlayer', payout)
     lib.notify({title = "You won! $" .. payout .. "!", type = "success"})
     resetNPCsToAnimation()
- 
-    if Config.enableJumped then
-    if math.random(1, 100) <= Config.jumpedChance then
+
+    if Config.enableJumped and math.random(1, 100) <= Config.jumpedChance then
         triggerNPCFight()
-    end
-        else
     end
 end
 
 function loseGame(betAmount)
     rollCounter = 0
-    TriggerServerEvent('tropic-dicegame:playerLoss', betAmount)
+    -- Don't remove money here because it's already taken from the player before the game started
     lib.notify({title = "You lost $" .. betAmount .. ".", type = "error"})
     resetNPCsToAnimation()
 end
@@ -173,22 +206,19 @@ function triggerNPCFight()
     local npcModels = {"g_m_y_ballaorig_01", "csb_ballasog"}
 
     for i = 1, 2 do
-        local npcModel = GetHashKey(npcModels[math.random(1, #npcModels)])
-        RequestModel(npcModel)
-        while not HasModelLoaded(npcModel) do
-            Wait(100)
+        local chosenModel = npcModels[math.random(#npcModels)]
+        local npcHash = loadModel(chosenModel)
+        if npcHash then
+            local xOffset = math.random(-5, 5)
+            local yOffset = math.random(-5, 5)
+            local ped = CreatePed(4, npcHash, playerCoords.x + xOffset, playerCoords.y + yOffset, playerCoords.z, 0.0, true, true)
+            TaskCombatPed(ped, playerPed, 0, 16)
         end
-
-        local ped = CreatePed(4, npcModel, playerCoords.x + math.random(-5, 5), playerCoords.y + math.random(-5, 5), playerCoords.z, 0.0, true, true)
-        TaskCombatPed(ped, playerPed, 0, 16)
     end
     lib.notify({title = "You're getting jumped!"})
 end
 
 function playRollAnimation(ped)
-    RequestAnimDict(Config.animation.dict)
-    while not HasAnimDictLoaded(Config.animation.dict) do
-        Wait(100)
-    end
+    loadAnimDict(Config.animation.dict)
     TaskPlayAnim(ped, Config.animation.dict, Config.animation.clip, 8.0, -8.0, Config.animation.duration, 0, 0, false, false, false)
 end
